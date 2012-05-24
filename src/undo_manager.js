@@ -7,7 +7,8 @@
       Y_KEY               = 89,
       BACKSPACE_KEY       = 8,
       DELETE_KEY          = 46,
-      MAX_HISTORY_ENTRIES = 40,
+      MAX_HISTORY_ENTRIES = 30,
+      CARET_PLACEHOLDER   = "_wysihtml5-caret-placeholder",
       UNDO_HTML           = '<span id="_wysihtml5-undo" class="_wysihtml5-temp">' + wysihtml5.INVISIBLE_SPACE + '</span>',
       REDO_HTML           = '<span id="_wysihtml5-redo" class="_wysihtml5-temp">' + wysihtml5.INVISIBLE_SPACE + '</span>',
       dom                 = wysihtml5.dom;
@@ -19,13 +20,22 @@
     }
   }
   
+  function silentRemove(element) {
+    if (element.parentNode) {
+      element.parentNode.removeChild(element);
+    }
+  }
+  
   wysihtml5.UndoManager = wysihtml5.lang.Dispatcher.extend(
     /** @scope wysihtml5.UndoManager.prototype */ {
     constructor: function(editor) {
       this.editor = editor;
       this.composer = editor.composer;
       this.element = this.composer.element;
-      this.history = [this.composer.getValue()];
+      
+      var initialValue = this.composer.getValue();
+      this.history = [initialValue];
+      this.historyWithCaret = [initialValue];
       this.position = 1;
       
       // Undo manager currently only supported in browsers who have the insertHTML command (not IE)
@@ -129,7 +139,9 @@
     
     transact: function() {
       var previousHtml  = this.history[this.position - 1],
-          currentHtml   = this.composer.getValue();
+          currentHtml   = this.composer.getValue(),
+          doc           = this.composer.sandbox.getDocument(),
+          that          = this;
       
       if (currentHtml == previousHtml) {
         return;
@@ -138,11 +150,20 @@
       var length = this.history.length = this.position;
       if (length > MAX_HISTORY_ENTRIES) {
         this.history.shift();
+        this.historyWithCaret.shift();
         this.position--;
       }
       
       this.position++;
-      this.history.push(currentHtml);
+          
+      this.composer.selection.executeAndRestoreSimple(function() {
+        var placeholder = doc.createElement("span");
+        placeholder.id = CARET_PLACEHOLDER;
+        that.composer.selection.insertNode(placeholder);
+        that.history.push(currentHtml);
+        that.historyWithCaret.push(that.composer.getValue());
+        silentRemove(placeholder);
+      });
     },
     
     undo: function() {
@@ -152,7 +173,7 @@
         return;
       }
       
-      this.set(this.history[--this.position - 1]);
+      this.set(this.historyWithCaret[--this.position - 1]);
       this.editor.fire("undo:composer");
     },
     
@@ -161,13 +182,19 @@
         return;
       }
       
-      this.set(this.history[++this.position - 1]);
+      this.set(this.historyWithCaret[++this.position - 1]);
       this.editor.fire("redo:composer");
     },
     
     set: function(html) {
       this.composer.setValue(html);
-      this.editor.focus(true);
+      var placeholder = this.composer.sandbox.getDocument().getElementById(CARET_PLACEHOLDER);
+      if (placeholder) {
+        this.composer.selection.setAfter(placeholder);
+        silentRemove(placeholder);
+      } else {
+        this.editor.focus(true);
+      }
     }
   });
 })(wysihtml5);
